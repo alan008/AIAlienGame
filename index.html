@@ -52,7 +52,7 @@ let bullets=[],acidParticles=[],acidRipples=[];
 let state='ready', player, platforms=[],blocks=[],coins=[],enemies=[],particles=[],popups=[],camera=0,score=0,coinCount=0,lives=3,timeLeft=180,checkpoint=80,checkpointTaken=false,deathTimer=0,accumulator=0,last=0,clock=0,jumpBuffer=0,muted=false,audioContext,toastTimer=0,finishBonus=false;
 let purgeFX={time:0,splats:[],strands:[],spray:[]};
 const hud={score:$('score'),coins:$('coins'),lives:$('lives'),time:$('time'),heat:$('weaponHeat'),heatFill:$('heatFill'),heatValue:$('heatValue'),heatStatus:$('heatStatus')};
-let levelSeed=0,levelJumps=[],levelProof=null;
+let levelSeed=0,levelJumps=[],levelProof=null,levelNumber=0,levelType='exterior';
 // Exterior art owns its palette and random stream; it never consumes sky or route randomness.
 function exteriorSetting(id,name,sector,material,colors,sky){
  const skyKeys=['nightTop','nightBottom','dayTop','dayBottom','dusk'];
@@ -84,27 +84,33 @@ const EXTERIOR_SETTINGS=[
   {light:'#c9cebe',mid:'#828d88',dark:'#46535a',deep:'#222f3b',edge:'#a3b4ad',accent:'#a7ded1',mark:'#c5c3a5',far:'#9aaeb0',near:'#4b646b',fog:'#c0cebf'},
   ['111c29','465861','5b7882','ccd5c3','c8b3a0'])
 ];
-let levelSetting=EXTERIOR_SETTINGS[0],settingBag=[],settingStarted=false,scenery=null;
+const UNDERGROUND_SETTING={id:'underground',name:'ПЕЩЕРЫ LV-426',sector:'LV-426 / SUBLEVEL',material:'basalt',
+ colors:{light:'#9aa9a5',mid:'#43595b',dark:'#243638',deep:'#111c20',edge:'#6c8580',accent:'#b9d59b',mark:'#c6bb8f'}};
+let levelSetting=EXTERIOR_SETTINGS[0],lastExteriorSetting=levelSetting,settingBag=[],settingStarted=false,scenery=null;
 function selectLevelSetting(seed,advance=true){
  const random=levelRandom(seed^0xa11e0426);
  if(!settingStarted){
-  settingStarted=true;settingBag=EXTERIOR_SETTINGS.slice(1);
+  settingStarted=true;levelNumber=1;lastExteriorSetting=EXTERIOR_SETTINGS[0];settingBag=EXTERIOR_SETTINGS.slice(1);
   for(let i=settingBag.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[settingBag[i],settingBag[j]]=[settingBag[j],settingBag[i]]}
  }
- else if(advance){
+ else if(advance)levelNumber++;
+ levelType=levelNumber%2===0?'underground':'exterior';
+ if(advance&&levelNumber>1&&levelType==='exterior'){
   if(!settingBag.length){
    settingBag=EXTERIOR_SETTINGS.slice();
    for(let i=settingBag.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[settingBag[i],settingBag[j]]=[settingBag[j],settingBag[i]]}
-   if(settingBag[0]===levelSetting)[settingBag[0],settingBag[1]]=[settingBag[1],settingBag[0]];
+   if(settingBag[0]===lastExteriorSetting)[settingBag[0],settingBag[1]]=[settingBag[1],settingBag[0]];
   }
-  levelSetting=settingBag.shift();
+  lastExteriorSetting=settingBag.shift();
  }
+ levelSetting=levelType==='underground'?UNDERGROUND_SETTING:lastExteriorSetting;
  scenery={
   ridges:Array.from({length:3},(_,layer)=>Array.from({length:50},(_,i)=>({x:i*80,y:random()*48+(i%5===0?random()*40:0)+layer*6}))),
   props:Array.from({length:26},(_,i)=>({x:i*135+random()*35,w:65+random()*65,h:40+random()*85,variant:i%4}))
  };
- $('worldLabel').textContent=levelSetting.sector+' / '+levelSetting.name;
+ $('worldLabel').textContent='ЭТАП '+String(levelNumber).padStart(2,'0')+' / '+levelSetting.sector+' / '+levelSetting.name;
  $('settingLabel').textContent=levelSetting.name;
+ $('skyPhase').textContent=levelType==='underground'?'ПОДЗЕМНЫЙ':atmosphere.label||'РАССВЕТ';
 }
 // Private seeded randomness keeps generation independent of combat and animation.
 function levelRandom(seed){let value=seed>>>0;return()=>{value=(value+0x6d2b79f5)>>>0;let t=Math.imul(value^(value>>>15),value|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296}}
@@ -133,7 +139,7 @@ function addPlatform(x,y,w,h=T,type='ledge'){const p={x,y,w,h,type};platforms.pu
 function addBlock(x,y,type='question'){const b=addPlatform(x,y,T,T,type);b.used=false;b.bump=0;blocks.push(b);return b}
 function addCoin(x,y,phase=Math.random()*6){coins.push({x,y,r:10,taken:false,phase})}
 function coinLine(x,y,n,gap=34,random=Math.random){for(let i=0;i<n;i++)addCoin(x+i*gap,y,random()*6)}
-function addEnemy(x,left,right,speed=46){enemies.push({type:'adult',x,y:FLOOR-30,w:32,h:30,vx:speed,left,right,alive:true,squash:0,hits:0,hitFlash:0})}
+function addEnemy(x,left,right,speed=46,floor=FLOOR){enemies.push({type:'adult',x,y:floor-30,w:32,h:30,vx:speed,left,right,alive:true,squash:0,hits:0,hitFlash:0})}
 function releaseLarva(block){
  const direction=Math.random()<.5?-1:1;
  const e={type:'larva',x:block.x+6,y:block.y+9,w:28,h:22,vx:direction*LARVA_SPEED,vy:-JUMP_SPEED,direction,grounded:false,jumpWait:0,alive:true,squash:0,hits:0,hitFlash:0};
@@ -192,8 +198,12 @@ function moveRipley(p,controls,dt,buffer=0,onHeadHit=()=>{}){
  p.step+=Math.abs(p.vx)*dt*.06;
  return{buffer,oldBottom};
 }
+function floorAt(x,width=26){
+ const ground=platforms.filter(p=>p.type==='ground'&&p.x<x+width&&p.x+p.w>x);
+ return ground.length?Math.min(...ground.map(p=>p.y)):FLOOR;
+}
 function validateLevelRoute(startX=80,keepTrace=false){
- const body={x:startX,y:FLOOR-32,w:26,h:32,vx:0,vy:0,face:1,grounded:false,coyote:0,step:0};
+ const body={x:startX,y:floorAt(startX)-32,w:26,h:32,vx:0,vy:0,face:1,grounded:false,coyote:0,step:0};
  const controls={right:true,left:false,jump:true,run:false},trace=[];
  const jumps=levelJumps.filter(j=>j.x>=startX),danger=enemies.filter(e=>e.alive&&e.type==='adult').map(e=>({x:e.left,y:e.y,w:e.right-e.left,h:e.h}));
  let next=0,buffer=0;
@@ -236,6 +246,50 @@ function buildLevelTerrain(random){
  let edge=0;
  for(const [left,right] of gaps){addPlatform(edge,FLOOR,left-edge,100,'ground');edge=right}
  addPlatform(edge,FLOOR,WORLD-edge,100,'ground');
+}
+function buildUndergroundTerrain(random){
+ const integer=(a,b)=>a+Math.floor(random()*(b-a+1));
+ platforms=[];blocks=[];coins=[];enemies=[];levelJumps=[];
+ const tunnel=(x,w,floor,ceiling=floor-260)=>{
+  addPlatform(x,floor,w,H-floor,'ground');
+  addPlatform(x,0,w,ceiling,'ceiling');
+ };
+ let edge=0;
+ // Broad, flat chambers keep both respawn points and the airlock safe.
+ for(const [start,count] of [[400,6],[3480,5]]){
+  tunnel(edge,start-edge,FLOOR);
+  let previous=FLOOR;
+  for(let i=0;i<count;i++){
+   const x=start+i*440,minFloor=i===count-1?420:380;
+   const heights=[previous-40,previous-20,previous+20,previous+40].filter(y=>y>=minFloor&&y<=FLOOR);
+   const floor=heights[integer(0,heights.length-1)];
+   tunnel(x,440,floor,floor-260+integer(-1,1)*10);
+   levelJumps.push({x:x-70,kind:'floor'});
+   levelJumps.push({x:x+125,kind:'cave'});
+   if(random()<.65){
+    const rise=integer(3,7)*10,w=integer(5,7)*10;
+    const rock=addPlatform(x+205,floor-rise,w,H-floor+rise,'caveRock');
+    rock.baseY=floor;
+   }else{
+    const left=x+185,right=x+280;
+    addEnemy(left+15,left,right,integer(38,54)*(random()<.5?-1:1),floor);
+   }
+   previous=floor;
+  }
+  edge=start+count*440;
+  levelJumps.push({x:edge-70,kind:'floor'});
+ }
+ tunnel(edge,WORLD-edge,FLOOR);
+}
+function decorateUnderground(random,trace){
+ // Only cells float in the passage; every solid obstacle grows from the floor.
+ let pose=0;
+ for(const jump of levelJumps)for(const offset of [40,80,120]){
+  while(pose<trace.length&&trace[pose].x<jump.x+offset)pose++;
+  const p=trace[pose];
+  if(p&&!platforms.some(surface=>overlap({x:p.x+3,y:p.y,w:20,h:24},surface)))addCoin(p.x+13,p.y+12,random()*6);
+ }
+ for(const x of [200,3100,3320,5900])coinLine(x,floorAt(x)-26,3,34,random);
 }
 function decorateLevel(random,trace){
  const integer=(a,b)=>a+Math.floor(random()*(b-a+1)),pick=a=>a[integer(0,a.length-1)];
@@ -293,23 +347,25 @@ function createLevel(seed=Math.floor(Math.random()*4294967296),advanceSetting=tr
  levelSeed=seed>>>0;
  selectLevelSetting(levelSeed,advanceSetting);
  const random=levelRandom(levelSeed);
+ const underground=levelType==='underground',build=underground?buildUndergroundTerrain:buildLevelTerrain,decorate=underground?decorateUnderground:decorateLevel;
  particles=[];popups=[];bullets=[];acidParticles=[];acidRipples=[];purgeFX={time:0,splats:[],strands:[],spray:[]};
  for(let attempt=1;attempt<=12;attempt++){
-  buildLevelTerrain(random);
+  build(random);
   const proof=validateLevelRoute(80,true);
   if(!proof.ok||!validateLevelRoute(3220).ok)continue;
-  decorateLevel(random,proof.trace);
+  decorate(random,proof.trace);
   const finalProof=validateLevelRoute();
-  if(finalProof.ok&&validateLevelRoute(3220).ok){levelProof={seed:levelSeed,attempts:attempt,seconds:finalProof.seconds,fallback:false};return}
+  if(finalProof.ok&&validateLevelRoute(3220).ok){levelProof={seed:levelSeed,type:levelType,attempts:attempt,seconds:finalProof.seconds,fallback:false};return}
  }
  // Fail closed if movement is changed later: never publish an unverified map.
  platforms=[];blocks=[];coins=[];enemies=[];levelJumps=[];
  addPlatform(0,FLOOR,WORLD,100,'ground');
- const proof=validateLevelRoute(80,true);decorateLevel(random,proof.trace);
- if(!validateLevelRoute().ok||!validateLevelRoute(3220).ok){platforms=platforms.filter(p=>p.type==='ground');blocks=[];coins=[]}
- levelProof={seed:levelSeed,attempts:12,seconds:proof.seconds,fallback:true};
+ if(underground)addPlatform(0,0,WORLD,FLOOR-260,'ceiling');
+ const proof=validateLevelRoute(80,true);decorate(random,proof.trace);
+ if(!validateLevelRoute().ok||!validateLevelRoute(3220).ok){platforms=platforms.filter(p=>p.type==='ground'||p.type==='ceiling');blocks=[];coins=[]}
+ levelProof={seed:levelSeed,type:levelType,attempts:12,seconds:proof.seconds,fallback:true};
 }
-function spawn(invincible=0){player={x:checkpoint,y:FLOOR-32,w:26,h:32,vx:0,vy:0,grounded:false,coyote:0,face:1,invincible,step:0,shotCooldown:0,muzzleFlash:0,weaponHeat:0,overheated:false};bullets=[];acidParticles=[];acidRipples=[];camera=Math.max(0,player.x-W*.35);jumpBuffer=0;clearInput();updateWeaponHUD()}
+function spawn(invincible=0){player={x:checkpoint,y:floorAt(checkpoint)-32,w:26,h:32,vx:0,vy:0,grounded:false,coyote:0,face:1,invincible,step:0,shotCooldown:0,muzzleFlash:0,weaponHeat:0,overheated:false};bullets=[];acidParticles=[];acidRipples=[];camera=Math.max(0,player.x-W*.35);jumpBuffer=0;clearInput();updateWeaponHUD()}
 function reset(){score=0;coinCount=0;lives=3;timeLeft=180;checkpoint=80;checkpointTaken=false;finishBonus=false;toastTimer=0;$('toast').classList.remove('visible');createLevel(undefined,state!=='ready');spawn();state='playing';$('overlay').classList.add('hidden');updateHUD();announce(levelSetting.name);last=performance.now();accumulator=0}
 function showCard(tag,title,text,button,note='ПРОБЕЛ ИЛИ ENTER — ПРОДОЛЖИТЬ'){ $('cardTag').textContent=tag;$('cardTitle').innerHTML=title;$('cardText').textContent=text;$('play').textContent=button;$('cardNote').textContent=note;$('overlay').classList.remove('hidden') }
 function pause(){if(state==='playing'){state='paused';clearInput();showCard('ПРОТОКОЛ ПРИОСТАНОВЛЕН','Тихо. Ни звука.','Рипли в укрытии. Сигнал движения временно заморожен.','ПРОДОЛЖИТЬ ▶')}else if(state==='paused'){state='playing';$('overlay').classList.add('hidden');last=performance.now();accumulator=0}}
@@ -440,7 +496,7 @@ function updatePurgeFX(dt){
  if(purgeFX.time===0){purgeFX.splats=[];purgeFX.strands=[];purgeFX.spray=[]}
 }
 function die(){if(state!=='playing')return;lives--;updateHUD();state='dying';deathTimer=1.15;player.vy=-380;player.vx=0;player.muzzleFlash=0;bullets=[];tone(380,.35,'triangle',.07,90);clearInput()}
-function win(){if(state!=='playing')return;state='won';bullets=[];player.muzzleFlash=0;clearInput();if(!finishBonus){score+=Math.ceil(timeLeft)*10;finishBonus=true;updateHUD()}melody([523,659,784,1047,784,1047]);showCard('ЭВАКУАЦИЯ ЗАВЕРШЕНА','Рипли<br>выжила.','Счёт: '+score.toLocaleString('ru-RU')+' · Ячейки: '+coinCount+' · Осталось: '+Math.ceil(timeLeft)+' сек.','ЕЩЁ ОДНА МИССИЯ ↻','СИГНАЛ ЖИЗНИ ПОДТВЕРЖДЁН. КУРС — НА ЗЕМЛЮ.')}
+function win(){if(state!=='playing')return;state='won';bullets=[];player.muzzleFlash=0;clearInput();if(!finishBonus){score+=Math.ceil(timeLeft)*10;finishBonus=true;updateHUD()}melody([523,659,784,1047,784,1047]);showCard('ЭВАКУАЦИЯ ЗАВЕРШЕНА','Рипли<br>выжила.','Счёт: '+score.toLocaleString('ru-RU')+' · Ячейки: '+coinCount+' · Осталось: '+Math.ceil(timeLeft)+' сек.','СЛЕДУЮЩИЙ УРОВЕНЬ ▶','СИГНАЛ ЖИЗНИ ПОДТВЕРЖДЁН. КУРС — НА ЗЕМЛЮ.')}
 function overlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
 function update(dt){
  updatePurgeFX(dt);
@@ -537,6 +593,7 @@ function skyTrail(e,age,color,width,length){
  const samples=16;ctx.beginPath();for(let i=0;i<=samples;i++){const p=eventPosition(e,lerp(tailAge,age,i/samples));if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y)}ctx.strokeStyle=g;ctx.lineWidth=width;ctx.lineCap='round';ctx.stroke();
 }
 function updateAtmosphere(dt){
+ if(levelType==='underground')return;
  const a=atmosphere;a.time+=dt;const theta=a.time/a.period*Math.PI*2+a.phase;
  a.day=clamp((Math.sin(theta)+.15)/.9);const cycle=Math.floor(theta/(Math.PI*2));
  if(cycle!==a.cycle){a.cycle=cycle;a.aurora={hue:vr(125,220),phase:vr(0,7),amplitude:vr(12,36)};a.moonTint=choose([[188,212,218],[215,205,182],[177,195,221]])}
@@ -637,6 +694,7 @@ function drawHorizonProp(prop){
  }
 }
 function drawBackground(){
+ if(levelType==='underground'){ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);return}
  drawDistantSky();
  const a=atmosphere,{material:m,colors:c}=levelSetting;
  for(let layer=0;layer<3;layer++){
@@ -733,6 +791,25 @@ function drawGround(p){
  }else if(m==='relic')line([[x,y+9],[x+p.w,y+9]],c.accent+'99',1);
  ctx.restore();
 }
+function drawCaveSurface(p){
+ const {colors:c}=levelSetting,{x,y,w,h}=p,ceiling=p.type==='ceiling',edge=ceiling?y+h:y;
+ ctx.save();ctx.beginPath();ctx.rect(x,y,w,h);ctx.clip();
+ ctx.fillStyle=gradient(0,y,0,y+h,ceiling?[c.deep,c.dark,c.mid]:[c.mid,c.dark,c.deep]);ctx.fillRect(x,y,w,h);
+ materialTexture(x,y,w,h);
+ // Square filled silhouettes meet exactly; facets and cracks stay inside the rock.
+ const start=Math.max(x,Math.floor(camera/70)*70-70),end=Math.min(x+w,camera+W+70),direction=ceiling?-1:1;
+ for(let a=start;a<end;a+=70){
+  const depth=13+Math.sin(a*.071)*6;
+  polygon([[a,edge],[a+21,edge+direction*depth],[a+49,edge+direction*7],[a+70,edge]],c.edge+'38');
+  line([[a+21,edge+direction*depth],[a+33,edge+direction*(depth+25)],[a+25,edge+direction*(depth+39)]],c.deep+'aa',1.5);
+ }
+ line([[x,edge],[x+w,edge]],c.edge+'bb',2);
+ if(p.type==='caveRock'){
+  line([[x,p.baseY],[x,y],[x+w,y],[x+w,p.baseY]],c.light+'88',1.5);
+  polygon([[x+4,y+4],[x+w*.4,y+11],[x+w*.6,p.baseY],[x+8,p.baseY]],c.light+'12');
+ }
+ ctx.restore();
+}
 function drawBlock(b){
  if(b.destroyed)return;
  const {material:m,colors:c}=levelSetting,y=b.y-(b.bump>0?Math.sin(b.bump/.18*Math.PI)*10:0),x=b.x,red=b.type==='purge',pulse=.5+.5*Math.sin(clock*Math.PI*2);
@@ -748,6 +825,7 @@ function drawBlock(b){
  for(const a of [x+4,x+36])for(const v of [y+5,y+35])ellipse(a,v,.9,.9,c.light);
 }
 function drawPlatform(p){
+ if(levelType==='underground'&&['ground','ceiling','caveRock'].includes(p.type)){drawCaveSurface(p);return}
  if(p.type==='ground'){drawGround(p);return}if(['brick','question','purge'].includes(p.type))return;
  const {material:m,colors:c}=levelSetting,x=p.x,y=p.y;
  surfaceBox(x,y,p.w,p.h);
@@ -771,13 +849,14 @@ function drawPlatform(p){
  }
 }
 
+function animationTime(){return levelType==='underground'?clock:atmosphere.time}
 function drawCoin(x,y,phase=0){
- const tilt=Math.sin(atmosphere.time*2+phase)*.09,pulse=.7+Math.sin(clock*4+phase)*.2;glow(x,y,23,'173,237,140',.13*pulse);ctx.save();ctx.translate(x,y);ctx.rotate(tilt);
+ const tilt=Math.sin(animationTime()*2+phase)*.09,pulse=.7+Math.sin(clock*4+phase)*.2;glow(x,y,23,'173,237,140',.13*pulse);ctx.save();ctx.translate(x,y);ctx.rotate(tilt);
  rounded(-6,-12,12,24,4,gradient(-6,0,6,0,['#39576b','#ccedb7','#6fa47b','#253f50']),'#b6d6b4');rounded(-3.5,-9,7,17,2,gradient(-4,0,4,0,['#5e9b75','#daffb4','#80be8b']));rounded(-3,-15,6,4,1,'#b4c9bc');rounded(-4,9,8,3,1,'#4e736c');line([[-2,-7],[-2,5]],'#f1ffd699',1);ctx.restore();
 }
 function drawLarva(e){
  if(!e.alive)return;
- const t=atmosphere.time*10+e.x*.04,air=!e.grounded,stretch=air?1.12:.85;
+ const t=animationTime()*10+e.x*.04,air=!e.grounded,stretch=air?1.12:.85;
  ctx.save();ctx.translate(e.x+e.w/2,e.y+e.h/2);ctx.scale(e.direction,stretch);
  ellipse(0,11/stretch,15,2,'#03132255');
  curve([[-7,1],[-24,-10],[-29,9],[-19,5+Math.sin(t*.6)*4]],'#192f43',3.7);
@@ -797,7 +876,7 @@ function drawLarva(e){
 }
 function drawEnemy(e){
  if(e.type==='larva'){drawLarva(e);return}
- if(!e.alive&&e.squash<=0)return;const t=atmosphere.time*8+e.x*.025,gait=Math.sin(t),tailWave=Math.sin(atmosphere.time*3+e.x)*1.7;
+ if(!e.alive&&e.squash<=0)return;const t=animationTime()*8+e.x*.025,gait=Math.sin(t),tailWave=Math.sin(animationTime()*3+e.x)*1.7;
  ctx.save();ctx.translate(e.x,e.y);if(e.vx<0){ctx.translate(32,0);ctx.scale(-1,1)}if(!e.alive){ctx.translate(0,23);ctx.scale(1,.25)}
  ellipse(15,31,16,2,'#00000030');
  curve([[6,22],[-6,26],[-22,14],[-20,2+tailWave]],'#0b1929',4);curve([[6,21],[-5,24],[-21,13],[-20,2+tailWave]],'#5c8292',1.8);curve([[4,20],[-8,21],[-18,12],[-20,2+tailWave]],'#a5bec133',.6);
@@ -818,8 +897,8 @@ function drawEnemy(e){
 function drawLimb(hip,knee,foot,color,width){curve([hip,hip,knee,foot],color,width);ellipse(knee[0],knee[1],width*.48,width*.48,color)}
 function drawPlayer(){
  if(state!=='ready'&&state!=='dying'&&player.invincible>0&&Math.floor(clock*14)%2!==0)return;
- const moving=player.grounded&&Math.abs(player.vx)>15,t=player.step,run=moving?clamp(Math.abs(player.vx)/230):0,air=!player.grounded&&state!=='ready',breath=Math.sin(atmosphere.time*2.5)*.45;
- const bob=moving?Math.abs(Math.sin(t))*1.7:breath,squash=player.grounded?atmosphere.land*.045:0;
+ const moving=player.grounded&&Math.abs(player.vx)>15,t=player.step,run=moving?clamp(Math.abs(player.vx)/230):0,air=!player.grounded&&state!=='ready',breath=Math.sin(animationTime()*2.5)*.45;
+ const bob=moving?Math.abs(Math.sin(t))*1.7:breath,squash=player.grounded&&levelType!=='underground'?atmosphere.land*.045:0;
  ctx.save();ctx.translate(player.x+13,player.y+32);if(player.face<0)ctx.scale(-1,1);ellipse(0,1,13,2.2,'#06131e55');ctx.scale(.55*(1+squash),.55*(1-squash));ctx.translate(0,-bob);ctx.rotate(moving?.035:air?clamp(player.vx/300,-1,1)*.05:0);
  const suit=gradient(-14,-50,15,-20,['#bdcdcb','#7e9fa7','#476c7d']),skin=gradient(-5,-72,11,-59,['#f1d6b7','#d1a386','#a97665']);
  const backKnee=[-6+Math.sin(t+Math.PI)*8*run,-13-(air?4:0)],backFoot=[-5+Math.sin(t+Math.PI)*12*run,air?-4:Math.min(0,-Math.cos(t+Math.PI)*5*run)];
@@ -881,10 +960,10 @@ function drawCombatFX(){
  ctx.restore();
 }
 function flag(x,checkpointFlag=false){
- const active=checkpointFlag?checkpointTaken:state==='won',top=checkpointFlag?348:180,{colors:c}=levelSetting;
- rounded(x-4,top,12,FLOOR-top,4,gradient(x-5,0,x+9,0,[c.dark,c.light,c.mid]));rounded(x-13,top-8,30,24,5,c.dark,c.edge);glow(x+2,top+3,30,active?'165,236,157':'242,173,115',.18);rounded(x-9,top-4,22,15,3,active?'#c4f1a7':'#d6ad7c');rounded(x-12,FLOOR-6,28,6,2,c.edge);
+ const floor=floorAt(x),active=checkpointFlag?checkpointTaken:state==='won',top=checkpointFlag?floor-112:levelType==='underground'?floor-200:180,{colors:c}=levelSetting;
+ rounded(x-4,top,12,floor-top,4,gradient(x-5,0,x+9,0,[c.dark,c.light,c.mid]));rounded(x-13,top-8,30,24,5,c.dark,c.edge);glow(x+2,top+3,30,active?'165,236,157':'242,173,115',.18);rounded(x-9,top-4,22,15,3,active?'#c4f1a7':'#d6ad7c');rounded(x-12,floor-6,28,6,2,c.edge);
  if(!checkpointFlag){rounded(x+23,top+31,94,25,5,c.deep+'dd',c.edge+'bb');ctx.fillStyle=c.light;ctx.font='600 10px Segoe UI,sans-serif';ctx.fillText('AIRLOCK  →',x+31,top+48)}
- if(active){ctx.save();ctx.globalAlpha=.16;const radius=10+(atmosphere.time*15)%28;ctx.beginPath();ctx.arc(x+2,top+3,radius,0,Math.PI*2);ctx.strokeStyle='#c6f5bc';ctx.lineWidth=1;ctx.stroke();ctx.restore()}
+ if(active){ctx.save();ctx.globalAlpha=.16;const radius=10+(animationTime()*15)%28;ctx.beginPath();ctx.arc(x+2,top+3,radius,0,Math.PI*2);ctx.strokeStyle='#c6f5bc';ctx.lineWidth=1;ctx.stroke();ctx.restore()}
 }
 function castle(){
  const x=6280,{material:m,colors:c}=levelSetting;
@@ -903,17 +982,17 @@ function drawPurgeFX(){
  ctx.globalAlpha=fade;for(const p of purgeFX.spray)ellipse(p.x,p.y,p.size*.5,p.size,p.size>7?'#8be5ff':'#249fe8',Math.atan2(p.vy,p.vx));if(age<.3){ctx.globalAlpha=(1-age/.3)*.12;ctx.fillStyle='#37a9ff';ctx.fillRect(0,0,W,H)}ctx.restore();
 }
 function draw(){
- ctx.setTransform(renderScale,0,0,renderScale,0,0);ctx.clearRect(0,0,W,H);drawBackground();ctx.save();ctx.translate(-camera,0);drawPits();castle();flag(3220,true);flag(6120);
+ ctx.setTransform(renderScale,0,0,renderScale,0,0);ctx.clearRect(0,0,W,H);drawBackground();ctx.save();ctx.translate(-camera,0);if(levelType!=='underground')drawPits();castle();flag(3220,true);flag(6120);
  for(const p of platforms)if(p.x+p.w>camera-50&&p.x<camera+W+50)drawPlatform(p);
  for(const b of blocks)if(b.x>camera-50&&b.x<camera+W)drawBlock(b);
  for(const c of coins)if(!c.taken&&c.x>camera-25&&c.x<camera+W+25)drawCoin(c.x,c.y,c.phase);
  for(const e of enemies)if(enemyOnScreen(e))drawEnemy(e);
- for(const p of atmosphere.puffs){const f=p.life/p.max;ellipse(p.x,p.y,p.r+(1-f)*7,1.5+(1-f)*2,`rgba(167,202,201,${f*.17})`)}drawPlayer();
+ if(levelType!=='underground')for(const p of atmosphere.puffs){const f=p.life/p.max;ellipse(p.x,p.y,p.r+(1-f)*7,1.5+(1-f)*2,`rgba(167,202,201,${f*.17})`)}drawPlayer();
  for(const p of particles){ctx.save();ctx.globalAlpha=clamp(p.life*2);ellipse(p.x,p.y,p.size*.5,p.size*.8,p.color,Math.atan2(p.vy,p.vx));ctx.restore()}
  drawCombatFX();
  ctx.font='600 12px Segoe UI,sans-serif';ctx.textAlign='center';for(const p of popups){ctx.fillStyle='#ecf9d8';ctx.shadowColor='#0b1925';ctx.shadowBlur=3;ctx.fillText(p.text,p.x,p.y)}ctx.shadowBlur=0;ctx.textAlign='left';ctx.restore();
  // Subtle lens vignette leaves the platforms and HUD readable in every phase.
- const vignette=ctx.createRadialGradient(W/2,H*.45,H*.3,W/2,H*.45,W*.7);vignette.addColorStop(0,'#06122200');vignette.addColorStop(1,'#06122255');ctx.fillStyle=vignette;ctx.fillRect(0,0,W,H);drawPurgeFX();
+ if(levelType!=='underground'){const vignette=ctx.createRadialGradient(W/2,H*.45,H*.3,W/2,H*.45,W*.7);vignette.addColorStop(0,'#06122200');vignette.addColorStop(1,'#06122255');ctx.fillStyle=vignette;ctx.fillRect(0,0,W,H)}drawPurgeFX();
 }
 resizeCanvas();
 if(typeof ResizeObserver!=='undefined')new ResizeObserver(resizeCanvas).observe(canvas);
