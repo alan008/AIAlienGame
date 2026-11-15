@@ -298,11 +298,13 @@ function buildCaveLights(){
  if(levelType!=='underground')return;
  // Fixtures own a separate random stream and never become collision surfaces.
  const random=levelRandom(levelSeed^0x1a4f70c2);
- for(let x=150;x<WORLD-80;x+=300+Math.floor(random()*65)){
+ for(let x=150;x<WORLD-80;x+=600+Math.floor(random()*130)){
   const roof=platforms.find(p=>p.type==='ceiling'&&x>=p.x&&x<p.x+p.w);
   const mountX=roof?Math.max(roof.x+18,Math.min(roof.x+roof.w-18,x)):x;
   const y=(roof?roof.h:200)+58+random()*24;
-  caveLights.push({x:mountX,y,mountY:roof?roof.h:200,radius:310+random()*45,power:.95+random()*.15,phase:random()*Math.PI*2,
+  const faultPeriod=7+random()*6;
+  caveLights.push({x:mountX,y,mountY:roof?roof.h:200,radius:310+random()*45,power:1.15+random()*.15,phase:random()*Math.PI*2,
+   faultPeriod,faultOffset:random()*faultPeriod,faultDuration:.9+random()*1.2,
    color:caveLights.length%3===1?[122,218,235]:[255,190,110]});
  }
 }
@@ -824,14 +826,27 @@ function drawCaveSurface(p){
   line([[x,p.baseY],[x,y],[x+w,y],[x+w,p.baseY]],c.light+'88',1.5);
   polygon([[x+4,y+4],[x+w*.4,y+11],[x+w*.6,p.baseY],[x+8,p.baseY]],c.light+'12');
  }
+ ctx.fillStyle='rgba(0,3,7,.40)';ctx.fillRect(x,y,w,h);
  ctx.globalCompositeOperation='screen';
  for(const light of frameCaveLights){
   if(light.x+light.radius<x||light.x-light.radius>x+w)continue;
-  glow(light.x,light.y,light.radius,light.color.join(','),.20*caveLightPulse(light));
+  glow(light.x,light.y,light.radius,light.color.join(','),.48*caveLightPulse(light));
  }
  ctx.restore();
 }
-function caveLightPulse(light){return light.power*(.96+Math.sin(clock*2.2+light.phase)*.025+Math.sin(clock*5.1+light.phase)*.015)}
+function caveLightPulse(light){
+ // Each fixture loses power independently. All illumination uses this same signal.
+ if(light.faultPeriod){
+  const elapsed=clock+light.faultOffset,cycle=Math.floor(elapsed/light.faultPeriod),time=elapsed-cycle*light.faultPeriod;
+  const variation=.85+.15*Math.sin(cycle*2.37+light.phase),outage=light.faultDuration*variation;
+  if(time<.14)return 0;
+  if(time<.24)return light.power*.55;
+  if(time<outage)return 0;
+  if(time<outage+.12)return light.power*1.10;
+  if(time<outage+.32)return 0;
+ }
+ return light.power*(1.02+Math.sin(clock*2.6+light.phase)*.10+Math.sin(clock*6.3+light.phase)*.06);
+}
 function caveLightBlocked(light,x,y){
  const dx=x-light.x,dy=y-light.y;
  for(const p of platforms){
@@ -858,8 +873,8 @@ function drawCaveLightHalos(){
  ctx.save();ctx.globalCompositeOperation='screen';
  for(const light of frameCaveLights){
   const color=light.color.join(','),power=caveLightPulse(light);
-  glow(light.x,light.y,light.radius,color,.055*power);
-  glow(light.x,light.y,56,color,.15*power);
+  glow(light.x,light.y,light.radius,color,.10*power);
+  glow(light.x,light.y,56,color,.30*power);
  }
  ctx.restore();
 }
@@ -871,8 +886,11 @@ function drawCaveFixtures(){
   line([[x+1,light.mountY],[x+1,light.mountY+12],[x-3,light.mountY+19],[x-3,y-20]],'#586660',1);
   rounded(x-11,y-21,22,42,4,'#132027','#697772');
   rounded(x-7,y-16,14,32,3,'#070d12','#3e504f');
-  glow(x,y,30,color.join(','),.25*power);
-  rounded(x-4,y-13,8,26,2,tint);rounded(x-1.5,y-11,3,22,1,'#fff5da');
+  rounded(x-4,y-13,8,26,2,'#18252c');rounded(x-1.5,y-11,3,22,1,'#34403e');
+  if(power>0){
+   ctx.save();ctx.globalAlpha=Math.min(1,power);glow(x,y,38,color.join(','),.40*power);
+   rounded(x-4,y-13,8,26,2,tint);rounded(x-1.5,y-11,3,22,1,'#fff5da');ctx.restore();
+  }
   for(const dy of [-8,8])line([[x-7,y+dy],[x+7,y+dy]],'#23363a',1.5);
   for(const dy of [-18,18]){rounded(x-8,y+dy-1,16,3,1,'#78877b');ellipse(x-8,y+dy,1,1,'#bdc3a5');ellipse(x+8,y+dy,1,1,'#bdc3a5')}
  }
@@ -888,13 +906,13 @@ function drawLitSprite(body,paint){
  g.setTransform(renderScale,0,0,renderScale,-left*renderScale,-top*renderScale);
  const mainContext=ctx;
  try{ctx=g;paint()}finally{ctx=mainContext}
- g.save();g.globalCompositeOperation='source-atop';g.fillStyle='rgba(3,8,14,.38)';g.fillRect(left,top,width,height);
+ g.save();g.globalCompositeOperation='source-atop';g.fillStyle='rgba(3,8,14,.58)';g.fillRect(left,top,width,height);
  const centerX=body.x+body.w/2,centerY=body.y+body.h*.45;
  for(const {light,dx,dy,strength} of caveSpriteLights(body)){
   const extent=Math.max(12,Math.abs(dx)*(body.w*.75+7)+Math.abs(dy)*(body.h*.6+6));
   const shade=g.createLinearGradient(centerX-dx*extent,centerY-dy*extent,centerX+dx*extent,centerY+dy*extent);
-  shade.addColorStop(0,rgba(light.color,0));shade.addColorStop(.4,rgba(light.color,.035*strength));
-  shade.addColorStop(.7,rgba(light.color,.30*strength));shade.addColorStop(1,rgba(light.color,.82*strength));
+  shade.addColorStop(0,rgba(light.color,0));shade.addColorStop(.4,rgba(light.color,Math.min(.16,.09*strength)));
+  shade.addColorStop(.7,rgba(light.color,Math.min(.72,.48*strength)));shade.addColorStop(1,rgba(light.color,Math.min(.96,1.05*strength)));
   g.fillStyle=shade;g.fillRect(left,top,width,height);
  }
  g.restore();ctx.drawImage(surface,left,top,width,height);
