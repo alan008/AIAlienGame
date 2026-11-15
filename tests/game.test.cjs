@@ -786,6 +786,28 @@ test('starting keeps the preview exterior; restart and a completed mission advan
   assert.ok(run("$('worldLabel').textContent.includes(levelSetting.name)"));
 });
 
+test('resurrection after game over restarts the same stage and route, including a new exterior cycle', () => {
+  const { run } = game();
+  for (const number of [1, 2, 17]) {
+    run(`levelNumber=${number === 17 ? 16 : number};if(${number}===17)settingBag=[];createLevel(12345,${number === 17});spawn();`);
+    const layout = () => run('JSON.stringify([levelNumber,levelType,levelSeed,levelSetting,settingBag,scenery,platforms,blocks,coins,enemies,levelJumps,caveLights,caveEggs])');
+    const original = layout();
+    run("checkpoint=3220;checkpointTaken=true;score=1200;coinCount=7;timeLeft=20;if(coins[0])coins[0].taken=true;if(enemies[0])enemies[0].alive=false;for(let i=0;i<3;i++){die();update(1.2)}");
+    assert.equal(run('state'), 'gameover');
+    assert.equal(run('lives'), 0);
+    assert.match(run("$('play').textContent"), /ВОСКРЕСНУТЬ/);
+    run('act()');
+    assert.equal(run('state'), 'playing');
+    assert.equal(layout(), original);
+    assert.equal(run('lives'), 3);
+    assert.equal(run('timeLeft'), 180);
+    assert.equal(run('score+coinCount'), 0);
+    assert.equal(run('player.x'), 80);
+    assert.equal(run('checkpointTaken'), false);
+    assert.equal(run('bullets.length+acidParticles.length+caveAcid.length'), 0);
+  }
+});
+
 test('death, checkpoint respawn and pause preserve the exterior and its remaining rotation', () => {
   const { run } = game();
   const art = () => run('JSON.stringify([levelSetting,scenery,settingBag])');

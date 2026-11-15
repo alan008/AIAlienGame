@@ -436,7 +436,12 @@ function createLevel(seed=Math.floor(Math.random()*4294967296),advanceSetting=tr
  buildCaveEggs();
 }
 function spawn(invincible=0){player={x:checkpoint,y:floorAt(checkpoint)-32,w:26,h:32,vx:0,vy:0,grounded:false,coyote:0,face:1,invincible,step:0,shotCooldown:0,muzzleFlash:0,weaponHeat:0,overheated:false};bullets=[];acidParticles=[];acidRipples=[];caveAcid=[];for(const egg of caveEggs)egg.timer=Math.max(3,egg.timer);camera=Math.max(0,player.x-W*.35);jumpBuffer=0;clearInput();updateWeaponHUD()}
-function reset(){score=0;coinCount=0;lives=3;timeLeft=180;checkpoint=80;checkpointTaken=false;finishBonus=false;toastTimer=0;$('toast').classList.remove('visible');createLevel(undefined,state!=='ready');spawn();state='playing';$('overlay').classList.add('hidden');updateHUD();announce(levelSetting.name);last=performance.now();accumulator=0}
+function reset(){
+ const resurrect=state==='gameover',seed=resurrect?levelSeed:undefined,previousScenery=scenery;
+ score=0;coinCount=0;lives=3;timeLeft=180;checkpoint=80;checkpointTaken=false;finishBonus=false;toastTimer=0;$('toast').classList.remove('visible');
+ createLevel(seed,!resurrect&&state!=='ready');if(resurrect)scenery=previousScenery;
+ spawn();state='playing';$('overlay').classList.add('hidden');updateHUD();announce(levelSetting.name);last=performance.now();accumulator=0;
+}
 function showCard(tag,title,text,button,note='ПРОБЕЛ ИЛИ ENTER — ПРОДОЛЖИТЬ'){ $('cardTag').textContent=tag;$('cardTitle').innerHTML=title;$('cardText').textContent=text;$('play').textContent=button;$('cardNote').textContent=note;$('overlay').classList.remove('hidden') }
 function pause(){if(state==='playing'){state='paused';clearInput();showCard('ПРОТОКОЛ ПРИОСТАНОВЛЕН','Тихо. Ни звука.','Рипли в укрытии. Сигнал движения временно заморожен.','ПРОДОЛЖИТЬ ▶')}else if(state==='paused'){state='playing';$('overlay').classList.add('hidden');last=performance.now();accumulator=0}}
 function act(){enableAudio();if(state==='ready'||state==='gameover'||state==='won')reset();else if(state==='paused')pause()}
@@ -575,7 +580,7 @@ function update(dt){
  for(const p of particles){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=600*dt}particles=particles.filter(p=>p.life>0);
  for(const p of popups){p.life-=dt;p.y-=35*dt}popups=popups.filter(p=>p.life>0);
  blocks.forEach(b=>b.bump=Math.max(0,b.bump-dt));
- if(state==='dying'){deathTimer-=dt;player.y+=player.vy*dt;player.vy+=1100*dt;if(deathTimer<=0){if(lives>0){spawn(1.8);timeLeft=Math.max(60,timeLeft);state='playing';announce(checkpointTaken?'Возвращаемся к контрольной точке!':'Резервный протокол запущен. Продолжай эвакуацию.')}else{state='gameover';showCard('СИГНАЛ ЖИЗНИ ПОТЕРЯН','Связь<br>оборвалась.','Счёт: '+score.toLocaleString('ru-RU')+' · Собрано ячеек: '+coinCount+'. Попробуй другой маршрут эвакуации.','НАЧАТЬ СНОВА ↻')}}return}
+ if(state==='dying'){deathTimer-=dt;player.y+=player.vy*dt;player.vy+=1100*dt;if(deathTimer<=0){if(lives>0){spawn(1.8);timeLeft=Math.max(60,timeLeft);state='playing';announce(checkpointTaken?'Возвращаемся к контрольной точке!':'Резервный протокол запущен. Продолжай эвакуацию.')}else{state='gameover';showCard('СИГНАЛ ЖИЗНИ ПОТЕРЯН','Связь<br>оборвалась.','Счёт: '+score.toLocaleString('ru-RU')+' · Собрано ячеек: '+coinCount+'. Этот уровень можно начать заново.','ВОСКРЕСНУТЬ ▶')}}return}
  if(state!=='playing')return;
  timeLeft-=dt;if(timeLeft<=0){timeLeft=0;die();return}player.invincible=Math.max(0,player.invincible-dt);
  const beforeJump=player.vy;

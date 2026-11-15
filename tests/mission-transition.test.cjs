@@ -13,7 +13,7 @@ const entries = process.env.GAME_HTML
   : [path.join(root, 'index.html'), ...(fs.existsSync(publishedEntry) ? [publishedEntry] : [])];
 
 for (const entry of entries) {
-  test(`winning and clicking Next level alternates stages in ${path.relative(path.join(__dirname, '..'), entry)}`, async () => {
+  test(`resurrection keeps the stage and victory advances it in ${path.relative(path.join(__dirname, '..'), entry)}`, async () => {
     const html = fs.readFileSync(entry, 'utf8');
     const instrumented = html.replace(/\}\)\(\);\s*<\/script>/, 'window.inspectGame = source => eval(source);})();</script>');
     assert.notEqual(html, instrumented);
@@ -35,6 +35,17 @@ for (const entry of entries) {
           assert.equal(await page.locator('#skyPhase').textContent(), 'ПОДЗЕМНЫЙ');
           assert.ok(await page.evaluate(() => window.inspectGame('platforms.some(p=>p.type==="ceiling")')));
         }
+        const layoutSource = 'JSON.stringify([levelNumber,levelType,levelSeed,levelSetting,settingBag,scenery,platforms,blocks,coins,enemies,levelJumps,caveLights,caveEggs])';
+        const originalLayout = await page.evaluate(source => window.inspectGame(source), layoutSource);
+        // Lose every life through the real falling/death flow, then click the visible button.
+        for (let life = 0; life < 3; life++) {
+          await page.evaluate(() => window.inspectGame('player.y=H+100;player.vy=0;player.grounded=false;update(1/120);update(1.2);draw()'));
+        }
+        assert.equal(await page.evaluate(() => window.inspectGame('state')), 'gameover');
+        assert.match(await page.locator('#play').textContent(), /ВОСКРЕСНУТЬ/);
+        await page.locator('#play').click();
+        assert.equal(await page.evaluate(source => window.inspectGame(source), layoutSource), originalLayout);
+        assert.deepEqual(await page.evaluate(() => window.inspectGame('({state,lives,timeLeft,x:player.x,checkpointTaken})')), { state: 'playing', lives: 3, timeLeft: 180, x: 80, checkpointTaken: false });
         // Finish through normal movement, enemies, checkpoint and the real win trigger.
         const result = await page.evaluate(() => window.inspectGame(`(()=>{
           input.right=true;input.jump=true;input.run=false;
