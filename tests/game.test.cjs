@@ -507,23 +507,126 @@ test('cave ceilings collide, and checkpoint respawn preserves the underground st
   assert.equal(run('player.y+player.h'), run('floorAt(3220)'));
 });
 
-test('the real game reaches the finish on generated routes with live enemies and no Shift', () => {
+test('cave eggs are three times rarer than lamps and leave safe waiting positions', () => {
+  const { run } = game();
+  assert.equal(run(`(()=>{
+    levelNumber=2;
+    for(let seed=0;seed<100;seed++){
+      createLevel(seed,false);
+      if(caveEggs.length!==Math.round(caveLights.length/3))throw new Error('Wrong egg density '+seed);
+      for(const egg of caveEggs){
+        if(!platforms.some(p=>p.type==='ceiling'&&egg.x-22>p.x&&egg.x+22<p.x+p.w&&egg.y===p.h))throw new Error('Unattached egg');
+        if(platforms.some(p=>p.type==='caveRock'&&egg.x+30>p.x&&egg.x-30<p.x+p.w))throw new Error('Drop over an obstacle');
+        if(enemies.some(e=>egg.x-75<e.right&&egg.x+45>e.left))throw new Error('Unsafe waiting position');
+        if([80,3220,6120].some(x=>Math.abs(x-egg.x)<200))throw new Error('Egg beside spawn or airlock');
+      }
+    }
+    createLevel(17,false);const original=JSON.stringify(caveEggs);
+    Math.random=()=>.999;createLevel(17,false);
+    if(JSON.stringify(caveEggs)!==original)throw new Error('Egg layout is not seeded');
+    levelNumber=3;createLevel(17,false);
+    return caveEggs.length===0&&caveAcid.length===0;
+  })()`), true);
+});
+
+test('eggs release single large clots with randomized dry intervals', () => {
+  const { run } = game();
+  run('levelNumber=2;createLevel(77,false);spawn();for(const egg of caveEggs)egg.timer=99;globalThis.egg=caveEggs[0];egg.timer=.001;updateCaveHazards(1/120);');
+  assert.equal(run('caveAcid.length'), 1);
+  assert.ok(run('caveAcid[0].r') >= 10);
+  assert.ok(run('egg.timer') >= 6.5 && run('egg.timer') <= 11);
+  run('updateCaveHazards(.2);');
+  assert.equal(run('caveAcid.length'), 1);
+  assert.equal(run(`(()=>{
+    platforms=[];addPlatform(0,FLOOR,WORLD,80,'ground');player.x=80;caveEggs=[{x:300,y:200,h:59,timer:.001}];caveAcid=[];
+    let maxActive=0,dryFrames=0,longestDry=0;const intervals=[];
+    for(let frame=0;frame<120*45;frame++){
+      const before=caveEggs[0].timer;updateCaveHazards(1/120);
+      if(caveEggs[0].timer>before)intervals.push(caveEggs[0].timer);
+      maxActive=Math.max(maxActive,caveAcid.length);
+      if(!caveAcid.length&&caveEggs[0].timer>1.5){dryFrames++;longestDry=Math.max(longestDry,dryFrames)}else dryFrames=0;
+    }
+    return maxActive===1&&longestDry>120&&intervals.length>3&&new Set(intervals.map(t=>t.toFixed(2))).size>2;
+  })()`), true, 'every drop must leave a real dry crossing window');
+});
+
+test('cave acid lands on the first floor surface and becomes a lasting puddle', () => {
+  const { run } = game();
+  run("levelType='underground';caveEggs=[];platforms=[];addPlatform(0,FLOOR,WORLD,80,'ground');releaseCaveAcid({x:300,y:200,h:59});for(let i=0;i<90;i++)updateCaveHazards(1/120);");
+  assert.equal(run('caveAcid[0].settled'), true);
+  assert.equal(run('caveAcid[0].y'), 460);
+  assert.ok(run('caveAcid[0].life') > 3);
+  assert.ok(run('caveAcid[0].radius') >= 23);
+  run("caveAcid=[];addPlatform(280,390,80,150,'caveRock');releaseCaveAcid({x:300,y:200,h:59});for(let i=0;i<90;i++)updateCaveHazards(1/120);");
+  assert.equal(run('caveAcid[0].y'), 390);
+});
+
+test('falling acid uses swept collisions and costs at most one life per hit', () => {
+  const { run } = game();
+  run("levelType='underground';caveEggs=[];platforms=[];addPlatform(0,FLOOR,WORLD,80,'ground');player.x=300;player.y=370;caveAcid=Array.from({length:3},()=>({x:313,y:250,vy:1000,r:11,settled:false,life:3.4}));updateCaveHazards(.15);");
+  assert.equal(run('state'), 'dying');
+  assert.equal(run('lives'), 2);
+});
+
+test('puddles hurt on the floor and during absorption; jumping and invincibility protect Ripley', () => {
+  const { run } = game();
+  run("levelType='underground';caveEggs=[];player.x=300;player.y=350;caveAcid=[{x:313,y:460,r:11,radius:26,settled:true,life:3.4}];updateCaveHazards(.01);");
+  assert.equal(run('lives'), 3);
+  run('player.y=428;player.invincible=1;updateCaveHazards(.01);');
+  assert.equal(run('lives'), 3);
+  run('player.invincible=0;caveAcid[0].life=.6;updateCaveHazards(.01);');
+  assert.equal(run('state'), 'dying');
+  assert.equal(run('lives'), 2);
+});
+
+test('acid puddle collision shrinks with absorption and disappears completely', () => {
+  const { run } = game();
+  run("levelType='underground';caveEggs=[];caveAcid=[{x:313,y:460,r:11,radius:26,settled:true,life:3.4}];globalThis.fullPuddle=caveAcidBounds(caveAcid[0]);caveAcid[0].life=.3;globalThis.fadingPuddle=caveAcidBounds(caveAcid[0]);");
+  assert.ok(run('fadingPuddle.w') < run('fullPuddle.w'));
+  assert.ok(run('fadingPuddle.h') < run('fullPuddle.h'));
+  run('player.x=300;player.y=428;caveAcid[0].life=.001;updateCaveHazards(.01);');
+  assert.equal(run('caveAcid.length'), 0);
+  assert.equal(run('lives'), 3);
+});
+
+test('pause freezes eggs and acid; checkpoint respawn clears acid and grants a dry start', () => {
+  const { run } = game();
+  run('levelNumber=2;createLevel(23,false);spawn();releaseCaveAcid(caveEggs[0]);globalThis.eggPositions=JSON.stringify(caveEggs.map(e=>[e.x,e.y]));pause();globalThis.frozenAcid=JSON.stringify([caveEggs,caveAcid]);updateCaveHazards(10);');
+  assert.equal(run('JSON.stringify([caveEggs,caveAcid])'), run('frozenAcid'));
+  run('pause();updateCaveHazards(.1);');
+  assert.notEqual(run('JSON.stringify([caveEggs,caveAcid])'), run('frozenAcid'));
+  run('checkpoint=3220;spawn(1.8);');
+  assert.equal(run('caveAcid.length'), 0);
+  assert.equal(run('caveEggs.every(egg=>egg.timer>=3)'), true);
+  assert.equal(run('JSON.stringify(caveEggs.map(e=>[e.x,e.y]))'), run('eggPositions'));
+});
+
+test('the real game reaches the finish with enemies, timed acid crossings and no Shift', () => {
   const { run } = game();
   const result = run(`(()=>{
-    let completed=0;
+    let completed=0,waitingFrames=0,deaths=0;
+    const originalDie=die;die=()=>{if(state==='playing')deaths++;originalDie()};
     for(let seed=0;seed<80;seed++){
       reset();createLevel(seed*7919,false);spawn();input.right=true;input.jump=true;input.run=false;
-      let next=0,frames=0;
-      while(state==='playing'&&frames++<120*45){
+      let next=0,frames=0;const passedEggs=new Set();
+      while(state==='playing'&&frames++<120*75){
+        let wait=false;
+        for(const egg of caveEggs)if(!passedEggs.has(egg)&&player.x>=egg.x-130&&player.x<egg.x+55){
+          if(egg.timer<1.5||caveAcid.some(drop=>Math.abs(drop.x-egg.x)<45))wait=true;else passedEggs.add(egg);
+        }
+        input.right=!wait;
+        if(wait)waitingFrames++;
         if(next<levelJumps.length&&player.grounded&&player.x>=levelJumps[next].x){jumpBuffer=.14;next++}
         update(1/120);
       }
-      if(state!=='won'||lives<3)throw new Error('Live route failed for seed '+seed*7919+' at '+player.x+' ('+state+')');
+      if(state!=='won'||lives<3||deaths)throw new Error('Live route failed for seed '+seed*7919+' at '+player.x+' ('+state+', deaths: '+deaths+')');
       completed++;
     }
-    return completed;
+    die=originalDie;return JSON.stringify({completed,waitingFrames,deaths});
   })()`);
-  assert.equal(result, 80);
+  assert.equal(JSON.parse(result).completed, 80);
+  assert.ok(JSON.parse(result).waitingFrames > 120, 'live routes must actually wait for acid to clear');
+  assert.equal(JSON.parse(result).deaths, 0);
 });
 
 test('validator rejects a wide gap, a tall wall, and a blocked jumping arc', () => {

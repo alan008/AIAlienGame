@@ -38,16 +38,23 @@ for (const entry of entries) {
         // Finish through normal movement, enemies, checkpoint and the real win trigger.
         const result = await page.evaluate(() => window.inspectGame(`(()=>{
           input.right=true;input.jump=true;input.run=false;
-          let next=0,frames=0;
-          while(state==='playing'&&frames++<120*45){
+          let deaths=0;const originalDie=die;die=()=>{if(state==='playing')deaths++;originalDie()};
+          let next=0,frames=0;const passedEggs=new Set();
+          while(state==='playing'&&frames++<120*75){
+            let wait=false;
+            for(const egg of caveEggs)if(!passedEggs.has(egg)&&player.x>=egg.x-130&&player.x<egg.x+55){
+              if(egg.timer<1.5||caveAcid.some(drop=>Math.abs(drop.x-egg.x)<45))wait=true;else passedEggs.add(egg);
+            }
+            input.right=!wait;
             if(next<levelJumps.length&&player.grounded&&player.x>=levelJumps[next].x){jumpBuffer=.14;next++}
             update(1/120);
           }
-          draw();return {state,lives,checkpointTaken};
+          die=originalDie;draw();return {state,lives,checkpointTaken,deaths};
         })()`));
         assert.equal(result.state, 'won');
         assert.ok(result.lives >= 3);
         assert.equal(result.checkpointTaken, true);
+        assert.equal(result.deaths, 0);
         assert.match(await page.locator('#play').textContent(), /СЛЕДУЮЩИЙ УРОВЕНЬ/);
         if (stage < 4) await page.locator('#play').click();
       }

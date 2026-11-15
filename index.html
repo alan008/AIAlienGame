@@ -49,12 +49,14 @@ const input={left:false,right:false,jump:false,run:false,shoot:false}, held=new 
 const SHOT_INTERVAL=.16,SHOT_SPEED=820,MIN_LETHAL_HITS=8,SHOT_KILL_CHANCE=1/20;
 const WEAPON_MAX_HEAT=100,WEAPON_HEAT_PER_SHOT=4,WEAPON_COOLING_RATE=25,WEAPON_RECOVERY_HEAT=60,WEAPON_RECOVERY_RATE=30;
 const GRAVITY=1450,JUMP_SPEED=590,LARVA_SPEED=150,LARVA_HITS=5,LARVA_SPAWN_CHANCE=1/4,LARVA_TURN_CHANCE=1/4;
+const CAVE_ACID_GRAVITY=1050,CAVE_ACID_LIFE=3.4,CAVE_ACID_FADE=1.2,EGG_WARNING=.7;
 let bullets=[],acidParticles=[],acidRipples=[];
 let state='ready', player, platforms=[],blocks=[],coins=[],enemies=[],particles=[],popups=[],camera=0,score=0,coinCount=0,lives=3,timeLeft=180,checkpoint=80,checkpointTaken=false,deathTimer=0,accumulator=0,last=0,clock=0,jumpBuffer=0,muted=false,audioContext,toastTimer=0,finishBonus=false;
 let purgeFX={time:0,splats:[],strands:[],spray:[]};
 const hud={score:$('score'),coins:$('coins'),lives:$('lives'),time:$('time'),heat:$('weaponHeat'),heatFill:$('heatFill'),heatValue:$('heatValue'),heatStatus:$('heatStatus')};
 let levelSeed=0,levelJumps=[],levelProof=null,levelNumber=0,levelType='exterior';
 let caveLights=[],frameCaveLights=[],spriteLightLayer=null;
+let caveEggs=[],caveAcid=[],caveHazardRandom=levelRandom(0);
 // Exterior art owns its palette and random stream; it never consumes sky or route randomness.
 function exteriorSetting(id,name,sector,material,colors,sky){
  const skyKeys=['nightTop','nightBottom','dayTop','dayBottom','dusk'];
@@ -308,6 +310,55 @@ function buildCaveLights(){
    color:caveLights.length%3===1?[122,218,235]:[255,190,110]});
  }
 }
+function buildCaveEggs(){
+ caveEggs=[];caveAcid=[];caveHazardRandom=levelRandom(levelSeed^0xac1d0426);
+ if(levelType!=='underground')return;
+ const sites=platforms.filter(p=>p.type==='ground'&&p.w===440&&(p.x<3040||p.x>=3480));
+ const count=Math.min(sites.length,Math.round(caveLights.length/3));
+ for(let i=0;i<count;i++){
+  const start=Math.floor(i*sites.length/count),end=Math.floor((i+1)*sites.length/count);
+  const candidates=sites.slice(start,end).filter(p=>!caveEggs.length||p.x+385-caveEggs[caveEggs.length-1].x>700);
+  const site=candidates[Math.floor(caveHazardRandom()*candidates.length)];
+  if(!site)continue;
+  const x=site.x+385,roof=platforms.find(p=>p.type==='ceiling'&&x>=p.x&&x<p.x+p.w);
+  caveEggs.push({x,y:roof.h,w:44,h:59,phase:caveHazardRandom()*Math.PI*2,timer:3+caveHazardRandom()*5});
+ }
+}
+function releaseCaveAcid(egg){
+ const drop={x:egg.x+(caveHazardRandom()-.5)*5,y:egg.y+egg.h+7,vy:35,r:10+caveHazardRandom()*2,phase:caveHazardRandom()*Math.PI*2,settled:false,life:CAVE_ACID_LIFE};
+ caveAcid.push(drop);egg.timer=6.5+caveHazardRandom()*4.5;
+ if(egg.x>camera-40&&egg.x<camera+W+40)tone(210,.1,'triangle',.025,95);
+ return drop;
+}
+function caveAcidBounds(drop){
+ if(!drop.settled)return{x:drop.x-drop.r*.8,y:drop.y-drop.r*1.15,w:drop.r*1.6,h:drop.r*2.3};
+ const fade=Math.max(0,Math.min(1,drop.life/CAVE_ACID_FADE)),radius=drop.radius*Math.sqrt(fade);
+ return{x:drop.x-radius,y:drop.y-7*fade,w:radius*2,h:7*fade+1};
+}
+function updateCaveHazards(dt){
+ if(levelType!=='underground'||state!=='playing')return;
+ for(const egg of caveEggs){egg.timer-=dt;if(egg.timer<=0)releaseCaveAcid(egg)}
+ for(const drop of caveAcid){
+  if(drop.settled){
+   drop.life=Math.max(0,drop.life-dt);
+   if(drop.life>0&&player.invincible<=0&&overlap(player,caveAcidBounds(drop)))die();
+   continue;
+  }
+  const oldY=drop.y;drop.vy+=CAVE_ACID_GRAVITY*dt;
+  const nextY=oldY+drop.vy*dt;
+  let surface=Infinity;
+  for(const p of platforms)if(p.type!=='ceiling'&&drop.x+drop.r*.7>p.x&&drop.x-drop.r*.7<p.x+p.w&&oldY+drop.r<=p.y+2&&nextY+drop.r>=p.y)surface=Math.min(surface,p.y);
+  drop.y=Math.min(nextY,surface-drop.r);
+  const swept={x:drop.x-drop.r*.8,y:oldY-drop.r*1.15,w:drop.r*1.6,h:drop.y-oldY+drop.r*2.3};
+  if(player.invincible<=0&&overlap(player,swept))die();
+  if(surface!==Infinity){
+   drop.settled=true;drop.y=surface;drop.vy=0;drop.radius=23+caveHazardRandom()*5;drop.life=CAVE_ACID_LIFE;
+   burst(drop.x,surface-3,'#42e7ca',9);
+   if(player.invincible<=0&&overlap(player,caveAcidBounds(drop)))die();
+  }
+ }
+ caveAcid=caveAcid.filter(drop=>drop.life>0&&drop.y<H+80);
+}
 function decorateLevel(random,trace){
  const integer=(a,b)=>a+Math.floor(random()*(b-a+1)),pick=a=>a[integer(0,a.length-1)];
  const bins=new Map();
@@ -372,7 +423,7 @@ function createLevel(seed=Math.floor(Math.random()*4294967296),advanceSetting=tr
   if(!proof.ok||!validateLevelRoute(3220).ok)continue;
   decorate(random,proof.trace);
   const finalProof=validateLevelRoute();
-  if(finalProof.ok&&validateLevelRoute(3220).ok){levelProof={seed:levelSeed,type:levelType,attempts:attempt,seconds:finalProof.seconds,fallback:false};buildCaveLights();return}
+  if(finalProof.ok&&validateLevelRoute(3220).ok){levelProof={seed:levelSeed,type:levelType,attempts:attempt,seconds:finalProof.seconds,fallback:false};buildCaveLights();buildCaveEggs();return}
  }
  // Fail closed if movement is changed later: never publish an unverified map.
  platforms=[];blocks=[];coins=[];enemies=[];levelJumps=[];
@@ -382,8 +433,9 @@ function createLevel(seed=Math.floor(Math.random()*4294967296),advanceSetting=tr
  if(!validateLevelRoute().ok||!validateLevelRoute(3220).ok){platforms=platforms.filter(p=>p.type==='ground'||p.type==='ceiling');blocks=[];coins=[]}
  levelProof={seed:levelSeed,type:levelType,attempts:12,seconds:proof.seconds,fallback:true};
  buildCaveLights();
+ buildCaveEggs();
 }
-function spawn(invincible=0){player={x:checkpoint,y:floorAt(checkpoint)-32,w:26,h:32,vx:0,vy:0,grounded:false,coyote:0,face:1,invincible,step:0,shotCooldown:0,muzzleFlash:0,weaponHeat:0,overheated:false};bullets=[];acidParticles=[];acidRipples=[];camera=Math.max(0,player.x-W*.35);jumpBuffer=0;clearInput();updateWeaponHUD()}
+function spawn(invincible=0){player={x:checkpoint,y:floorAt(checkpoint)-32,w:26,h:32,vx:0,vy:0,grounded:false,coyote:0,face:1,invincible,step:0,shotCooldown:0,muzzleFlash:0,weaponHeat:0,overheated:false};bullets=[];acidParticles=[];acidRipples=[];caveAcid=[];for(const egg of caveEggs)egg.timer=Math.max(3,egg.timer);camera=Math.max(0,player.x-W*.35);jumpBuffer=0;clearInput();updateWeaponHUD()}
 function reset(){score=0;coinCount=0;lives=3;timeLeft=180;checkpoint=80;checkpointTaken=false;finishBonus=false;toastTimer=0;$('toast').classList.remove('visible');createLevel(undefined,state!=='ready');spawn();state='playing';$('overlay').classList.add('hidden');updateHUD();announce(levelSetting.name);last=performance.now();accumulator=0}
 function showCard(tag,title,text,button,note='ПРОБЕЛ ИЛИ ENTER — ПРОДОЛЖИТЬ'){ $('cardTag').textContent=tag;$('cardTitle').innerHTML=title;$('cardText').textContent=text;$('play').textContent=button;$('cardNote').textContent=note;$('overlay').classList.remove('hidden') }
 function pause(){if(state==='playing'){state='paused';clearInput();showCard('ПРОТОКОЛ ПРИОСТАНОВЛЕН','Тихо. Ни звука.','Рипли в укрытии. Сигнал движения временно заморожен.','ПРОДОЛЖИТЬ ▶')}else if(state==='paused'){state='playing';$('overlay').classList.add('hidden');last=performance.now();accumulator=0}}
@@ -530,6 +582,8 @@ function update(dt){
  const movement=moveRipley(player,input,dt,jumpBuffer,p=>{if(['question','brick','purge'].includes(p.type))hitBlock(p)});
  const oldBottom=movement.oldBottom;jumpBuffer=movement.buffer;
  if(beforeJump>=0&&player.vy< -200)tone(160,.12,'triangle',.035,380);
+ updateCaveHazards(dt);
+ if(state!=='playing')return;
  updateWeaponHeat(dt);
  player.shotCooldown=Math.max(0,player.shotCooldown-dt);
  if(input.shoot)shoot();
@@ -895,6 +949,63 @@ function drawCaveFixtures(){
   for(const dy of [-18,18]){rounded(x-8,y+dy-1,16,3,1,'#78877b');ellipse(x-8,y+dy,1,1,'#bdc3a5');ellipse(x+8,y+dy,1,1,'#bdc3a5')}
  }
 }
+function drawCaveEggs(){
+ if(levelType!=='underground')return;
+ for(const egg of caveEggs){
+  if(egg.x<camera-60||egg.x>camera+W+60)continue;
+  const warning=Math.max(0,1-egg.timer/EGG_WARNING),pulse=.5+.5*Math.sin(clock*4+egg.phase);
+  ctx.save();ctx.translate(egg.x,egg.y);
+  for(const side of [-1,1]){
+   curve([[side*3,13],[side*12,-7],[side*24,-9],[side*39,-2]],'#243c35',6);
+   curve([[side*4,11],[side*14,-4],[side*27,-5],[side*37,-2]],'#7d91706b',1.4);
+   curve([[side*7,9],[side*22,-13],[side*30,-12],[side*47,-9]],'#355044',3);
+  }
+  ctx.beginPath();ctx.moveTo(-15,3);ctx.bezierCurveTo(-29,13,-24,36,-13,48);ctx.bezierCurveTo(-7,55,-5,57,0,60);ctx.bezierCurveTo(5,57,7,55,13,48);ctx.bezierCurveTo(24,36,29,13,15,3);ctx.quadraticCurveTo(0,-3,-15,3);ctx.closePath();
+  ctx.fillStyle=gradient(-20,0,19,53,['#243c35','#65744e','#354f3c','#122c2d']);ctx.fill();ctx.strokeStyle='#84927399';ctx.lineWidth=1;ctx.stroke();
+  ellipse(-7,20,8,16,'#a9b17c1c',-.2);ellipse(10,23,7,18,'#081f2666',.2);
+  for(let i=0;i<7;i++){
+   const side=i%2?-1:1,x=side*(13+Math.sin(i*2+egg.phase)*3),y=10+i*4.5;
+   ellipse(x,y,2.5,4.2,'#192f2b88',side*.4);
+   curve([[x,y-3],[x-side*5,y],[side*7,y+7],[side*2,51]],'#8eab8166',.8);
+  }
+  for(const side of [-1,1]){
+   curve([[side*17,30],[side*12,42],[side*6,44],[side*4,55]],'#101f28',4);
+   curve([[side*15,33],[side*11,43],[side*7,45],[side*3,56]],'#7ca38a',1.2);
+  }
+  ellipse(0,53,7.5,5,'#0a2327');glow(0,55,20+warning*17,'40,237,197',.09+warning*.23);
+  curve([[-6,51],[-4,57],[4,57],[6,51]],'#50cfad',1.2);
+  const r=2.5+warning*6;
+  ellipse(0,59+warning*3,r,r*(1+warning*.5),gradient(0,54,0,71,['#b2ffe2','#30d8b7','#0a7e79']));
+  ellipse(-r*.3,58+warning*2,r*.25,r*.36,'#e3ffefbb');
+  if(warning>0)ellipse(0,53,4+warning,1.8,'rgba(130,255,216,'+(.3+pulse*.5)+')');
+  ctx.restore();
+ }
+}
+function drawCaveAcid(){
+ if(levelType!=='underground')return;
+ for(const drop of caveAcid){
+  if(drop.x<camera-50||drop.x>camera+W+50)continue;
+  if(!drop.settled){
+   const {x,y,r}=drop;
+   glow(x,y,r*3.2,'31,239,202',.24);
+   curve([[x,y-r*2.8],[x-1,y-r*1.7],[x+1,y-r*.9],[x,y]],'#5df6d28c',r*.38);
+   ellipse(x,y,r*.82,r*1.25,gradient(x-r,y-r,x+r,y+r,['#b8ffe0','#31e0b9','#077f81']),Math.sin(drop.phase)*.1);
+   ellipse(x-r*.25,y-r*.35,r*.26,r*.48,'#dcfff1cc',-.2);
+   ellipse(x+r*.27,y+r*.2,r*.15,r*.34,'#087b82aa');
+   continue;
+  }
+  const fade=Math.max(0,Math.min(1,drop.life/CAVE_ACID_FADE)),r=drop.radius*Math.sqrt(fade),sink=(1-fade)*6;
+  ctx.save();ctx.beginPath();ctx.rect(drop.x-drop.radius-15,drop.y-32,drop.radius*2+30,33);ctx.clip();ctx.globalAlpha=fade;
+  glow(drop.x,drop.y-2,r*1.8,'24,238,197',.18*fade);
+  ellipse(drop.x,drop.y-1+sink,r,5+fade*4,gradient(0,drop.y-9,0,drop.y+4,['#a6ffda','#31d6ad','#086e75']));
+  line([[drop.x-r*.72,drop.y-3+sink],[drop.x-r*.2,drop.y-5+sink],[drop.x+r*.43,drop.y-3+sink]],'#b8ffe29c',1.5);
+  for(let i=0;i<3;i++){
+   const x=drop.x+Math.sin(drop.phase+i*2)*r*.65,y=drop.y-4+sink-Math.sin(clock*3+i+drop.phase)*1.5;
+   ellipse(x,y,2.5*fade,2*fade,'#8bffd7aa');
+  }
+  ctx.restore();
+ }
+}
 function drawLitSprite(body,paint){
  if(levelType!=='underground'){paint();return}
  // Paint once into a small reusable layer; source-atop keeps light inside the actual silhouette.
@@ -1094,6 +1205,7 @@ function draw(){
  for(const p of platforms)if(p.x+p.w>camera-50&&p.x<camera+W+50)drawPlatform(p);
  for(const b of blocks)if(b.x>camera-50&&b.x<camera+W)drawBlock(b);
  drawCaveFixtures();
+ drawCaveEggs();drawCaveAcid();
  for(const c of coins)if(!c.taken&&c.x>camera-25&&c.x<camera+W+25)drawCoin(c.x,c.y,c.phase);
  for(const e of enemies)if(enemyOnScreen(e))drawLitSprite(e,()=>drawEnemy(e));
  if(levelType!=='underground')for(const p of atmosphere.puffs){const f=p.life/p.max;ellipse(p.x,p.y,p.r+(1-f)*7,1.5+(1-f)*2,`rgba(167,202,201,${f*.17})`)}drawLitSprite(player,drawPlayer);

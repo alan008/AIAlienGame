@@ -114,12 +114,32 @@ async function main() {
     const average = pixel => pixel.reduce((sum, channel) => sum + channel, 0) / pixel.length;
     assert.ok(average(powerStates.on.core) - average(powerStates.off.core) > 100, 'The lamp itself must visibly go dark');
     assert.ok(average(powerStates.on.floor) - average(powerStates.off.floor) > 15, 'The reflections on stone must visibly disappear');
+    await page.evaluate(() => window.inspectGame(`(()=>{
+      levelNumber=2;createLevel(707,false);checkpoint=80;spawn();
+      const egg=caveEggs[0];camera=Math.max(0,egg.x-440);player.x=egg.x-110;player.y=floorAt(player.x)-player.h;
+      for(const other of caveEggs)other.timer=99;egg.timer=EGG_WARNING*.25;draw();
+    })()`));
+    await page.locator('#game').screenshot({ path: path.join(output, 'eggs-warning.png') });
+    await page.evaluate(() => window.inspectGame('releaseCaveAcid(caveEggs[0]);for(let i=0;i<40;i++){clock+=1/120;updateCaveHazards(1/120)}draw()'));
+    assert.equal(await page.evaluate(() => window.inspectGame('caveAcid.length===1&&!caveAcid[0].settled')), true);
+    await page.locator('#game').screenshot({ path: path.join(output, 'acid-falling.png') });
+    await page.evaluate(() => window.inspectGame('for(let i=0;i<120&&!caveAcid[0].settled;i++)updateCaveHazards(1/120);draw()'));
+    assert.equal(await page.evaluate(() => window.inspectGame('caveAcid[0].settled')), true);
+    await page.locator('#game').screenshot({ path: path.join(output, 'acid-puddle.png') });
+    const hit = await page.evaluate(() => window.inspectGame('(()=>{player.x=caveAcid[0].x-player.w/2;player.y=caveAcid[0].y-player.h;player.invincible=0;updateCaveHazards(1/120);return {state,lives}})()'));
+    assert.deepEqual(hit, { state: 'dying', lives: 2 });
+    await page.evaluate(() => window.inspectGame("state='playing';player.x=caveEggs[0].x-110;player.y=floorAt(player.x)-player.h;caveAcid[0].life=.45;draw()"));
+    await page.locator('#game').screenshot({ path: path.join(output, 'acid-absorbing.png') });
+    await page.evaluate(() => window.inspectGame('updateCaveHazards(.5);draw()'));
+    assert.equal(await page.evaluate(() => window.inspectGame('caveAcid.length')), 0);
+    await page.locator('#game').screenshot({ path: path.join(output, 'acid-dry.png') });
     const timing = await page.evaluate(() => window.inspectGame('(()=>{const started=performance.now();for(let i=0;i<120;i++){clock+=1/60;draw()}return (performance.now()-started)/120})()'));
     console.log('Directional sprite and power outage checks:', JSON.stringify(checks));
     console.log('Visible lamp and reflection contrast:', JSON.stringify(powerStates));
     console.log(`Average cave render: ${timing.toFixed(2)} ms; previews: ${output}`);
     await page.evaluate(() => window.inspectGame('levelNumber=3;createLevel(707,false);draw()'));
     assert.equal(await page.evaluate(() => window.inspectGame('caveLights.length')), 0);
+    assert.equal(await page.evaluate(() => window.inspectGame('caveEggs.length+caveAcid.length')), 0);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
