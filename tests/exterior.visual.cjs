@@ -57,7 +57,7 @@ async function main() {
     }
     // Sky phases and existing celestial events cannot paint into the black passage.
     await page.evaluate(() => window.inspectGame('camera=0;player.x=80;player.y=FLOOR-player.h;draw()'));
-    assert.deepEqual(await page.evaluate(() => window.inspectGame('Array.from(ctx.getImageData(470*renderScale,280*renderScale,1,1).data)')), [0, 0, 0, 255]);
+    assert.deepEqual(await page.evaluate(() => window.inspectGame('drawBackground();Array.from(ctx.getImageData(470*renderScale,280*renderScale,1,1).data)')), [0, 0, 0, 255]);
     await page.evaluate(() => window.inspectGame("globalThis.skySnapshot=JSON.stringify(atmosphere);updateAtmosphere(30);draw()"));
     assert.equal(await page.evaluate(() => window.inspectGame('JSON.stringify(atmosphere)===skySnapshot')), true);
     await page.locator('#restart').click();
